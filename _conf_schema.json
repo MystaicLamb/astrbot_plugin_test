@@ -1,0 +1,45 @@
+{
+  "daily_push": {
+    "description": "自动推送设置",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "是否开启每日自动推送",
+        "type": "bool",
+        "default": false
+      },
+      "push_time": {
+        "description": "推送时间（24小时制，如 08:00）",
+        "type": "string",
+        "default": "08:00"
+      },
+      "target_type": {
+        "description": "推送目标类型",
+        "type": "string",
+        "options": ["private", "group"],
+        "default": "private"
+      },
+      "target_id": {
+        "description": "推送目标ID（QQ号或群号）",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "daily_target": {
+    "description": "每日默认学习目标单词数",
+    "type": "int",
+    "default": 10
+  },
+  "include_learned": {
+    "description": "是否抽取已学过的单词（开启后随机抽取会包含已学单词）",
+    "type": "bool",
+    "default": false
+  },
+  "word_bank": {
+    "description": "默认词库",
+    "type": "string",
+    "options": ["cet4", "cet6"],
+    "default": "cet4"
+  }
+}
