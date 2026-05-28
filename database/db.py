@@ -195,6 +195,39 @@ class WordDatabase:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+    # --- user-scoped learning stats (global, across all groups) ---
+    async def get_user_learned_words(self, user_id: str):
+        async with self._conn.execute(
+            "SELECT word, review_count FROM learning_records WHERE user_id = ?",
+            (user_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_user_recent_words(self, user_id: str, limit: int = 10):
+        async with self._conn.execute(
+            "SELECT word, first_learned, review_count FROM learning_records WHERE user_id = ? ORDER BY first_learned DESC LIMIT ?",
+            (user_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_user_today_learned(self, user_id: str, today: str) -> int:
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM learning_records WHERE user_id = ? AND first_learned = ?",
+            (user_id, today),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def get_user_last_checkin(self, user_id: str) -> str:
+        async with self._conn.execute(
+            "SELECT MAX(first_learned) FROM learning_records WHERE user_id = ?",
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row and row[0] else ""
+
     # --- group-scoped learning stats ---
     async def get_group_learned_words(self, user_id: str, group_id: str):
         async with self._conn.execute(

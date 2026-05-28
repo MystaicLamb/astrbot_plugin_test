@@ -30,7 +30,7 @@ class WordBankLoader:
             logger.error(f"Failed to load word bank: {e}")
 
     async def pick_new_word(self, user_id: str, group_id: str = "", category: str = None, include_learned: bool = False):
-        learned = await self.db.get_group_learned_words(user_id, group_id)
+        learned = await self.db.get_user_learned_words(user_id)
         learned_set = {r["word"] for r in learned}
 
         if include_learned:
@@ -47,7 +47,7 @@ class WordBankLoader:
         return word
 
     async def pick_review_word(self, user_id: str, group_id: str = ""):
-        learned = await self.db.get_group_learned_words(user_id, group_id)
+        learned = await self.db.get_user_learned_words(user_id)
         if not learned:
             return None
         word_entry = random.choice(learned)

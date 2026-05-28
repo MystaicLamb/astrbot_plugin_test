@@ -432,31 +432,24 @@ class DailyWordPlugin(Star):
 
         await self.db.add_learning_record(user_id, group_id, word["word"], today)
 
-        # Group-specific stats derived from learning_records
-        group_total = await self.db.get_group_total_learned(user_id, group_id)
-        group_last = await self.db.get_group_last_checkin(user_id, group_id)
-        today_learned = await self.db.get_group_today_learned(user_id, group_id, today)
+        # Global user stats (shared across all groups and private chats)
+        total = await self.db.get_global_total_learned(user_id)
+        today_learned = await self.db.get_user_today_learned(user_id, today)
+        last_checkin = await self.db.get_user_last_checkin(user_id)
 
         streak = 1
-        if group_last and group_last != today:
-            last_dt = datetime.strptime(group_last, "%Y-%m-%d")
+        if last_checkin and last_checkin != today:
+            last_dt = datetime.strptime(last_checkin, "%Y-%m-%d")
             if (datetime.now() - last_dt).days == 1:
-                streak = await self.db.get_group_streak(user_id, group_id)
-        # if already checked in today, maintain current streak
-        if group_last == today:
-            streak = await self.db.get_group_streak(user_id, group_id)
+                streak = await self.db.get_global_streak(user_id)
+        if last_checkin == today:
+            streak = await self.db.get_global_streak(user_id)
 
-        # Persist global stats for backward compat
-        await self.db.update_user_checkin(user_id, today, streak, group_total, today_learned)
+        await self.db.update_user_checkin(user_id, today, streak, total, today_learned)
         user = await self.db.get_user(user_id)
 
-        # Override user dict with group-specific values for render
-        user["streak_days"] = streak
-        user["total_learned"] = group_total
-        user["today_learned"] = today_learned
-
         logger.info(f"[today_word] user={user_id} group={group_id} "
-                    f"total={group_total} today={today_learned} streak={streak}")
+                    f"total={total} today={today_learned} streak={streak}")
 
         img_path = self._render_word_image(word, user, today_learned=today_learned)
 
@@ -468,7 +461,7 @@ class DailyWordPlugin(Star):
         footer_lines = [
             f"━━━━━━━━━━━━━━",
             f"📊 今日进度  {bar}  {today_learned}/{target}",
-            f"🔥 连续打卡 {streak} 天  |  📚 累计学习 {group_total} 词",
+            f"🔥 连续打卡 {streak} 天  |  📚 累计学习 {total} 词",
             f"━━━━━━━━━━━━━━",
         ]
         if today_learned >= target:
@@ -490,7 +483,7 @@ class DailyWordPlugin(Star):
         user_id = self._get_user_id(event)
         group_id = self._get_group_id(event)
 
-        learned = await self.db.get_group_learned_words(user_id, group_id)
+        learned = await self.db.get_user_learned_words(user_id)
         if not learned:
             yield event.plain_result("📭 你还没有学过单词，先发送 /今日单词 开始学习吧！")
             return
@@ -510,31 +503,26 @@ class DailyWordPlugin(Star):
                 break
         review_count = (record["review_count"] + 1) if record else 1
 
-        # Group-specific stats
-        group_total = await self.db.get_group_total_learned(user_id, group_id)
-        group_today = await self.db.get_group_today_learned(user_id, group_id, today)
-        group_streak = await self.db.get_group_streak(user_id, group_id)
+        # Global user stats
+        total = await self.db.get_global_total_learned(user_id)
+        today_learned = await self.db.get_user_today_learned(user_id, today)
+        streak = await self.db.get_global_streak(user_id)
 
-        # Override user dict with group-specific values for render
-        user["streak_days"] = group_streak
-        user["total_learned"] = group_total
-        user["today_learned"] = group_today
+        img_path = self._render_word_image(word, user, today_learned=today_learned, review_count=review_count)
 
-        img_path = self._render_word_image(word, user, today_learned=group_today, review_count=review_count)
-
-        bar = self._progress_bar(group_today, user.get("daily_target", 10))
+        bar = self._progress_bar(today_learned, user.get("daily_target", 10))
 
         footer_lines = [
             f"━━━━━━━━━━━━━━",
-            f"📊 今日进度  {bar}  {group_today}/{user.get('daily_target', 10)}",
-            f"🔥 连续打卡 {group_streak} 天  |  📚 累计学习 {group_total} 词",
+            f"📊 今日进度  {bar}  {today_learned}/{user.get('daily_target', 10)}",
+            f"🔥 连续打卡 {streak} 天  |  📚 累计学习 {total} 词",
             f"━━━━━━━━━━━━━━",
             f"📝 这是第 {review_count} 次复习这个单词",
             "💡 /今日单词 学习新词  ·  /单词本 查看已学",
         ]
 
         logger.info(f"[review_word] user={user_id} group={group_id} "
-                    f"total={group_total} today={group_today} streak={group_streak}")
+                    f"total={total} today={today_learned} streak={streak}")
 
         text = "🔄 来复习一下，温故知新 ~\n" + "\n".join(footer_lines)
         yield event.chain_result([
@@ -550,26 +538,17 @@ class DailyWordPlugin(Star):
         group_id = self._get_group_id(event)
         today = self._get_today()
 
-        group_learned = await self.db.get_group_learned_words(user_id, group_id)
-        group_today = await self.db.get_group_today_learned(user_id, group_id, today)
-        group_total = await self.db.get_group_total_learned(user_id, group_id)
-        group_streak = await self.db.get_group_streak(user_id, group_id)
-        group_last = await self.db.get_group_last_checkin(user_id, group_id)
-
-        global_total = await self.db.get_global_total_learned(user_id)
-        global_streak = await self.db.get_global_streak(user_id)
+        total = await self.db.get_global_total_learned(user_id)
+        today_learned = await self.db.get_user_today_learned(user_id, today)
+        streak = await self.db.get_global_streak(user_id)
+        last_checkin = await self.db.get_user_last_checkin(user_id)
 
         d = "━━━━━━━━━━━━━━"
         lines = ["📊 我的学习进度", d]
-        if group_id:
-            lines.append(f"👥 当前群组学习: {len(group_learned)} 词")
-            lines.append(f"🔥 群内连续: {group_streak} 天")
-            lines.append(f"📚 群内累计: {group_total} 词")
-            lines.append(f"📊 本群今日: {group_today} 词")
-            lines.append(f"📅 群内最后打卡: {group_last or '无'}")
-            lines.append(d)
-        lines.append(f"🔥 全局连续打卡: {global_streak} 天")
-        lines.append(f"📚 全局累计学习: {global_total} 词")
+        lines.append(f"🔥 连续打卡: {streak} 天")
+        lines.append(f"📚 累计学习: {total} 词")
+        lines.append(f"📊 今日已学: {today_learned} 词")
+        lines.append(f"📅 最后打卡: {last_checkin or '无'}")
         lines.append(f"🎯 每日目标: {user.get('daily_target', 10)} 词")
         yield event.plain_result("\n".join(lines))
 
@@ -589,7 +568,7 @@ class DailyWordPlugin(Star):
             except ValueError:
                 pass
 
-        records = await self.db.get_group_recent_words(user_id, group_id, limit)
+        records = await self.db.get_user_recent_words(user_id, limit)
         if not records:
             yield event.plain_result("📭 你的单词本还是空的，快发送 /今日单词 开始学习吧！")
             return
