@@ -1,23 +1,84 @@
 import os
+import random
 from datetime import datetime, timedelta
+from pathlib import Path
+import urllib.request
+import io
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Image, Plain
+from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
+
+from PIL import Image as PILImage, ImageDraw, ImageFont
 
 from .database import WordDatabase
 from .wordbank import WordBankLoader
 from .tasks import PushScheduler
 
 
-@register("dailyword", "PluginDev", "每日单词学习插件", "2.0.0")
+THEME_COLORS = [
+    "#2F4F4F",  # 深石板灰
+    "#4B0082",  # 靛蓝
+    "#006400",  # 深绿
+    "#8B0000",  # 深红
+    "#2F2F4F",  # 深紫蓝
+    "#4A4A6A",  # 灰紫
+    "#1a1a2e",  # 深夜蓝
+    "#16213e",  # 海军蓝
+    "#0f3460",  # 深蓝
+    "#533483",  # 紫罗兰
+]
+
+CDN_BACKGROUNDS = [
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/alex-he-IGsLkWL4JMM-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/andrei-r-popescu-zHyr6DRoxFo-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/angelina-kusznirewicz--lCQhQ1Ueik-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/cai-fang-B47KcMR2eNY-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/eduard-pretsi-tzxzXecKA-Q-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/eugene-golovesov-TTqfc5TWPcI-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/farnaz-kohankhaki-mAIPCIDOcjk-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/fer-troulik-9EnnPbqiJbk-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/hanvin-cheong-0zr1TG4qRos-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/jisang-jung-HB1kt6cVz2E-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/junel-mujar-Po8CZAwyy6w-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/kristaps-ungurs-aaEwFuzBrDA-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/land-o-lakes-inc-9w6Qb-dqBwE-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/land-o-lakes-inc-TQSvFz7NHuo-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/lcs-_vgt-pZYzbpu_9bk-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/lens-by-benji-_jF2nXuu9AA-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/liana-s-3bPnXCN0ZUs-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/louis-gaudiau-7Z94A-v9kvw-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/magicpattern-87PP9Zd7MNo-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/marek-piwnicki-lm_CeNw9bH4-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/nemo-jDcjw0jCfv0-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/oleksandra-nadtocha-mRcd6AWsX3I-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/pascal-debrunner-ob8DTqyLzME-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/pavel-moiseev-6OyIuRmctNY-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/robert-visual-diary-berlin-4ic17Co0d6k-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/rod-long-liGPSuWK4ek-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/rod-long-o_npS9MnX34-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/roman-0OZK7ciERRM-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/samuel-quek-EBTXvQuVX08-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/samuel-quek-zg9nNEvqytQ-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/spencer-plouzek-ZcQ0g_frEck-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/takashi-s-EG_Yvw7tzV4-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/the-walters-art-museum-gjIIkr9-8qc-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/tobias-reich-BG3PSRcTOik-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/tobias-reich-n36_NSOBLnw-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/tobias-reich-UgiiLFskUCw-unsplash.jpg",
+    "https://tuchuang12.oss-cn-hangzhou.aliyuncs.com/photos/wallace-henry--r5wlBxk9NA-unsplash.jpg",
+]
+
 class DailyWordPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
         self.config = config or {}
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
         self.db_path = os.path.join(self.plugin_dir, "data.db")
+        self.bg_cache_dir = os.path.join(self.plugin_dir, "bg_cache")
+        os.makedirs(self.bg_cache_dir, exist_ok=True)
         self.db = WordDatabase(self.db_path)
         self.loader = WordBankLoader(self.db)
         self.scheduler = PushScheduler(context, self.db, self.loader)
@@ -75,31 +136,171 @@ class DailyWordPlugin(Star):
             await self.db.update_user_groups(user_id, group_id)
         return user
 
+    # ---------- PIL Image Rendering ----------
+
     @staticmethod
-    def _fmt_word_card(word: dict, user: dict, today_learned: int = 0, review_count: int = 0) -> str:
-        """Format a word as a plain-text card."""
-        lines = []
-        tag = "📖 复习单词" if review_count > 0 else ("📖 已学习" if word.get("is_learned") else "📖 每日单词")
-        lines.append(f"{tag}")
-        lines.append("")
-        word_line = f"🔤 {word.get('word', '')}"
+    def _get_font(size: int):
+        """Try to load a CJK-capable font, fallback to default."""
+        candidates = [
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simhei.ttf",
+            "C:/Windows/Fonts/simsun.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/System/Library/Fonts/PingFang.ttc",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    return ImageFont.truetype(path, size)
+                except Exception:
+                    continue
+        return ImageFont.load_default()
+
+    @staticmethod
+    def _get_phonetic_font(size: int):
+        """Try to load a font with IPA phonetic symbol support."""
+        candidates = [
+            "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/times.ttf",
+            "C:/Windows/Fonts/calibri.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    return ImageFont.truetype(path, size)
+                except Exception:
+                    continue
+        return ImageFont.load_default()
+
+    def _get_background(self):
+        """Load background from local cache, download if missing."""
+        url = random.choice(CDN_BACKGROUNDS)
+        cache_name = url.split("/")[-1]
+        cache_path = os.path.join(self.bg_cache_dir, cache_name)
+
+        if os.path.exists(cache_path):
+            try:
+                return PILImage.open(cache_path).convert("RGB")
+            except Exception:
+                pass
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = resp.read()
+            with open(cache_path, "wb") as f:
+                f.write(data)
+            return PILImage.open(io.BytesIO(data)).convert("RGB")
+        except Exception as e:
+            logger.warning(f"Failed to download background, using fallback: {e}")
+            return None
+
+    def _render_word_image(
+        self,
+        word: dict,
+        user: dict,
+        today_learned: int = 0,
+        review_count: int = 0,
+    ) -> str:
+        """Render a word card using PIL with semi-transparent overlay, save to temp dir."""
+        W, H = 600, 700
+        theme_color = random.choice(THEME_COLORS)
+
+        # 1. Background layer
+        bg_img = self._get_background()
+        if bg_img:
+            bg_img = bg_img.resize((W, H), PILImage.LANCZOS)
+        else:
+            # Fallback gradient
+            bg_img = PILImage.new("RGB", (W, H), theme_color)
+            draw_bg = ImageDraw.Draw(bg_img)
+            tc = tuple(int(theme_color.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+            for y in range(H):
+                factor = 1.0 - 0.3 * (y / H)
+                draw_bg.line([(0, y), (W, y)], fill=(int(tc[0] * factor), int(tc[1] * factor), int(tc[2] * factor)))
+
+        # 2. Semi-transparent overlay layer (so background is visible)
+        overlay = PILImage.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw_o = ImageDraw.Draw(overlay)
+
+        # Uniform dark overlay
+        draw_o.rectangle([0, 0, W, H], fill=(0, 0, 0, 140))
+
+        # Composite
+        bg_img = bg_img.convert("RGBA")
+        img = PILImage.alpha_composite(bg_img, overlay).convert("RGB")
+        draw = ImageDraw.Draw(img)
+
+        # Fonts
+        ft_tag = self._get_font(22)
+        ft_word = self._get_font(56)
+        ft_phonetic = self._get_phonetic_font(24)
+        ft_meaning = self._get_font(28)
+        ft_example = self._get_font(22)
+        ft_stat = self._get_font(20)
+        ft_small = self._get_font(18)
+
+        # Tag (no emoji to avoid garbled text)
+        tag = "复习单词" if review_count > 0 else ("已学习" if word.get("is_learned") else "每日单词")
+        draw.text((W // 2, 30), tag, fill="#ffffff", font=ft_tag, anchor="mt")
+
+        # Word
+        draw.text((W // 2, 85), word.get("word", ""), fill="#ffffff", font=ft_word, anchor="mt")
+
+        # Phonetic
         phonetic = word.get("phonetic", "")
         if phonetic:
-            word_line += f"  {phonetic}"
-        lines.append(word_line)
-        lines.append("")
-        lines.append(f"📘 释义: {word.get('meaning', '')}")
+            draw.text((W // 2, 150), phonetic, fill="#e2e8f0", font=ft_phonetic, anchor="mt")
+
+        # Meaning
+        meaning = word.get("meaning", "")
+        if meaning:
+            draw.text((48, 230), "释义", fill="#7c3aed", font=ft_small)
+            meaning_y = 258
+            max_width = W - 96
+            words = meaning
+            while words:
+                bbox = draw.textbbox((0, 0), words, font=ft_meaning)
+                if bbox[2] <= max_width:
+                    draw.text((48, meaning_y), words, fill="#e2e8f0", font=ft_meaning)
+                    break
+                low, high = 1, len(words)
+                while low < high:
+                    mid = (low + high + 1) // 2
+                    bbox = draw.textbbox((0, 0), words[:mid], font=ft_meaning)
+                    if bbox[2] <= max_width:
+                        low = mid
+                    else:
+                        high = mid - 1
+                draw.text((48, meaning_y), words[:low], fill="#e2e8f0", font=ft_meaning)
+                words = words[low:].lstrip()
+                meaning_y += 38
+
+        # Example
         example = word.get("example", "")
         if example:
-            lines.append(f"💬 例句: \"{example}\"")
-        lines.append("")
+            example_y = max(meaning_y + 20, 320)
+            draw.text((48, example_y), "例句", fill="#f59e0b", font=ft_small)
+            draw.text((48, example_y + 28), f'"{example}"', fill="#d1d5db", font=ft_example)
+
+        # Footer stats (no emoji)
         streak = user.get("streak_days", 0)
         total = user.get("total_learned", 0)
         target = user.get("daily_target", 10)
-        lines.append(f"🔥 连续 {streak} 天  |  📚 累计 {total} 词  |  🎯 今日 {today_learned}/{target}")
-        if review_count > 0:
-            lines.append(f"📝 第 {review_count} 次复习")
-        return "\n".join(lines)
+        stat_text = f"连续 {streak} 天    累计 {total} 词    今日 {today_learned}/{target}"
+        draw.text((W // 2, H - 30), stat_text, fill="#e2e8f0", font=ft_stat, anchor="mm")
+
+        # Save to AstrBot temp dir
+        temp_dir = get_astrbot_temp_path()
+        os.makedirs(temp_dir, exist_ok=True)
+        fname = f"word_card_{word.get('word','')}_{int(datetime.now().timestamp())}.png"
+        out_path = os.path.join(temp_dir, fname)
+        img.save(out_path, "PNG")
+        return out_path
 
     @staticmethod
     def _fmt_stats(user: dict, today_learned: int = 0) -> str:
@@ -115,7 +316,7 @@ class DailyWordPlugin(Star):
 
     @filter.command("今日单词")
     async def today_word(self, event: AstrMessageEvent):
-        """Pick a new word to learn, check in, and send text card."""
+        """Pick a new word to learn, check in, and send image card."""
         user = await self._ensure_user(event)
         user_id = self._get_user_id(event)
         group_id = self._get_group_id(event)
@@ -138,7 +339,7 @@ class DailyWordPlugin(Star):
         await self.db.update_user_checkin(user_id, today, streak, total, today_learned)
         user = await self.db.get_user(user_id)
 
-        card_text = self._fmt_word_card(word, user, today_learned=today_learned)
+        img_path = self._render_word_image(word, user, today_learned=today_learned)
 
         greeting = self._get_greeting()
         bar = self._progress_bar(today_learned, user.get("daily_target", 10))
@@ -157,8 +358,11 @@ class DailyWordPlugin(Star):
             footer_lines.append(f"💪 还差 {remain} 个单词达成今日目标，加油！")
         footer_lines.append("💡 /复习单词 巩固记忆  ·  /我的进度 查看详情")
 
-        text = greeting + "\n" + card_text + "\n" + "\n".join(footer_lines)
-        yield event.plain_result(text)
+        text = greeting + "\n" + "\n".join(footer_lines)
+        yield event.chain_result([
+            Plain(text),
+            Image.fromFileSystem(img_path),
+        ])
 
     @filter.command("复习单词")
     async def review_word(self, event: AstrMessageEvent):
@@ -187,7 +391,7 @@ class DailyWordPlugin(Star):
                 break
         review_count = (record["review_count"] + 1) if record else 1
 
-        card_text = self._fmt_word_card(word, user, today_learned=user.get("today_learned", 0), review_count=review_count)
+        img_path = self._render_word_image(word, user, today_learned=user.get("today_learned", 0), review_count=review_count)
 
         bar = self._progress_bar(user.get("today_learned", 0), user.get("daily_target", 10))
 
@@ -200,8 +404,11 @@ class DailyWordPlugin(Star):
             "💡 /今日单词 学习新词  ·  /单词本 查看已学",
         ]
 
-        text = "🔄 来复习一下，温故知新 ~\n" + card_text + "\n" + "\n".join(footer_lines)
-        yield event.plain_result(text)
+        text = "🔄 来复习一下，温故知新 ~\n" + "\n".join(footer_lines)
+        yield event.chain_result([
+            Plain(text),
+            Image.fromFileSystem(img_path),
+        ])
 
     @filter.command("我的进度")
     async def my_progress(self, event: AstrMessageEvent):
