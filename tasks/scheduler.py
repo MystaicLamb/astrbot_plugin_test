@@ -126,11 +126,22 @@ class PushScheduler:
 
     @staticmethod
     def _get_font(size: int):
+        """Try to load a CJK-capable font, fallback to default."""
         candidates = [
+            # Windows
             "C:/Windows/Fonts/msyh.ttc",
             "C:/Windows/Fonts/simhei.ttf",
             "C:/Windows/Fonts/simsun.ttc",
+            # Linux — common CJK font locations
             "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            "/usr/share/fonts/truetype/arphic/uming.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
+            # macOS
             "/System/Library/Fonts/PingFang.ttc",
         ]
         for path in candidates:
@@ -145,12 +156,18 @@ class PushScheduler:
     def _get_phonetic_font(size: int):
         """Try to load a font with IPA phonetic symbol support."""
         candidates = [
+            # Windows
             "C:/Windows/Fonts/segoeui.ttf",
             "C:/Windows/Fonts/arial.ttf",
             "C:/Windows/Fonts/times.ttf",
             "C:/Windows/Fonts/calibri.ttf",
+            # Linux — fonts with good IPA coverage
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            # macOS
             "/System/Library/Fonts/Helvetica.ttc",
         ]
         for path in candidates:
