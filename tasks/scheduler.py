@@ -145,6 +145,15 @@ class PushScheduler:
     @staticmethod
     def _get_font(size: int):
         """Try to load a CJK-capable font, fallback to default."""
+        # 0. Bundled font (always available)
+        plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        bundled = os.path.join(plugin_dir, "assets", "font.ttf")
+        if os.path.exists(bundled):
+            try:
+                return ImageFont.truetype(bundled, size)
+            except Exception:
+                pass
+
         # 1. Dynamic discovery via fontconfig (Linux)
         path = PushScheduler._find_font_by_fc("zh")
         if path:
@@ -246,6 +255,16 @@ class PushScheduler:
                     return ImageFont.truetype(path, size)
                 except Exception:
                     continue
+
+        # 3. Fallback to bundled CJK font (usually has basic IPA)
+        plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        bundled = os.path.join(plugin_dir, "assets", "font.ttf")
+        if os.path.exists(bundled):
+            try:
+                return ImageFont.truetype(bundled, size)
+            except Exception:
+                pass
+
         return ImageFont.load_default()
 
     def _get_background(self):
