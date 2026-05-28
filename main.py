@@ -455,6 +455,9 @@ class DailyWordPlugin(Star):
         user["total_learned"] = group_total
         user["today_learned"] = today_learned
 
+        logger.info(f"[today_word] user={user_id} group={group_id} "
+                    f"total={group_total} today={today_learned} streak={streak}")
+
         img_path = self._render_word_image(word, user, today_learned=today_learned)
 
         greeting = self._get_greeting()
@@ -512,6 +515,11 @@ class DailyWordPlugin(Star):
         group_today = await self.db.get_group_today_learned(user_id, group_id, today)
         group_streak = await self.db.get_group_streak(user_id, group_id)
 
+        # Override user dict with group-specific values for render
+        user["streak_days"] = group_streak
+        user["total_learned"] = group_total
+        user["today_learned"] = group_today
+
         img_path = self._render_word_image(word, user, today_learned=group_today, review_count=review_count)
 
         bar = self._progress_bar(group_today, user.get("daily_target", 10))
@@ -524,6 +532,9 @@ class DailyWordPlugin(Star):
             f"📝 这是第 {review_count} 次复习这个单词",
             "💡 /今日单词 学习新词  ·  /单词本 查看已学",
         ]
+
+        logger.info(f"[review_word] user={user_id} group={group_id} "
+                    f"total={group_total} today={group_today} streak={group_streak}")
 
         text = "🔄 来复习一下，温故知新 ~\n" + "\n".join(footer_lines)
         yield event.chain_result([
@@ -545,6 +556,9 @@ class DailyWordPlugin(Star):
         group_streak = await self.db.get_group_streak(user_id, group_id)
         group_last = await self.db.get_group_last_checkin(user_id, group_id)
 
+        global_total = await self.db.get_global_total_learned(user_id)
+        global_streak = await self.db.get_global_streak(user_id)
+
         d = "━━━━━━━━━━━━━━"
         lines = ["📊 我的学习进度", d]
         if group_id:
@@ -554,8 +568,8 @@ class DailyWordPlugin(Star):
             lines.append(f"📊 本群今日: {group_today} 词")
             lines.append(f"📅 群内最后打卡: {group_last or '无'}")
             lines.append(d)
-        lines.append(f"🔥 全局连续打卡: {user.get('streak_days', 0)} 天")
-        lines.append(f"📚 全局累计学习: {user.get('total_learned', 0)} 词")
+        lines.append(f"🔥 全局连续打卡: {global_streak} 天")
+        lines.append(f"📚 全局累计学习: {global_total} 词")
         lines.append(f"🎯 每日目标: {user.get('daily_target', 10)} 词")
         yield event.plain_result("\n".join(lines))
 
