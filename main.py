@@ -1,5 +1,6 @@
 import os
 import random
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 import urllib.request
@@ -139,14 +140,38 @@ class DailyWordPlugin(Star):
     # ---------- PIL Image Rendering ----------
 
     @staticmethod
+    def _find_font_by_fc(lang: str = "zh"):
+        """Use fc-list to discover system fonts dynamically."""
+        try:
+            result = subprocess.run(
+                ["fc-list", f":lang={lang}", "file"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.strip().split("\n"):
+                    path = line.split(":")[0].strip()
+                    if path and os.path.exists(path):
+                        return path
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def _get_font(size: int):
         """Try to load a CJK-capable font, fallback to default."""
+        # 1. Dynamic discovery via fontconfig (Linux)
+        path = DailyWordPlugin._find_font_by_fc("zh")
+        if path:
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+
+        # 2. Static fallback paths
         candidates = [
-            # Windows
             "C:/Windows/Fonts/msyh.ttc",
             "C:/Windows/Fonts/simhei.ttf",
             "C:/Windows/Fonts/simsun.ttc",
-            # Linux — common CJK font locations
             "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -154,8 +179,6 @@ class DailyWordPlugin(Star):
             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
             "/usr/share/fonts/truetype/arphic/uming.ttc",
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttf",
-            # macOS
             "/System/Library/Fonts/PingFang.ttc",
         ]
         for path in candidates:
@@ -164,24 +187,68 @@ class DailyWordPlugin(Star):
                     return ImageFont.truetype(path, size)
                 except Exception:
                     continue
+
+        # 3. Auto-download fallback
+        path = DailyWordPlugin._ensure_cjk_font()
+        if path:
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+
+        logger.warning("No CJK font found, Chinese characters will render as boxes.")
         return ImageFont.load_default()
+
+    @staticmethod
+    def _ensure_cjk_font():
+        """Auto-download a CJK font if none found on the system. Returns path or None."""
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        font_dir = os.path.join(plugin_dir, "bg_cache")
+        font_path = os.path.join(font_dir, "NotoSansCJKsc-Regular.otf")
+
+        if os.path.exists(font_path) and os.path.getsize(font_path) > 100000:
+            return font_path
+
+        urls = [
+            "https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+            "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf",
+        ]
+        for url in urls:
+            try:
+                logger.info(f"Downloading CJK font for Chinese rendering...")
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = resp.read()
+                with open(font_path, "wb") as f:
+                    f.write(data)
+                logger.info(f"CJK font saved to {font_path}")
+                return font_path
+            except Exception as e:
+                logger.warning(f"Failed to download font from {url}: {e}")
+        return None
 
     @staticmethod
     def _get_phonetic_font(size: int):
         """Try to load a font with IPA phonetic symbol support."""
+        # 1. Dynamic discovery via fontconfig (Linux)
+        path = DailyWordPlugin._find_font_by_fc("en")
+        if path:
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+
+        # 2. Static fallback paths
         candidates = [
-            # Windows
             "C:/Windows/Fonts/segoeui.ttf",
             "C:/Windows/Fonts/arial.ttf",
             "C:/Windows/Fonts/times.ttf",
             "C:/Windows/Fonts/calibri.ttf",
-            # Linux — fonts with good IPA coverage
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans.ttf",
             "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            # macOS
             "/System/Library/Fonts/Helvetica.ttc",
         ]
         for path in candidates:
