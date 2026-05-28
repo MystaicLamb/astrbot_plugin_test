@@ -96,7 +96,7 @@ class DailyWordPlugin(Star):
         logger.info("DailyWord plugin terminated.")
 
     def _get_user_id(self, event: AstrMessageEvent) -> str:
-        return event.unified_msg_origin
+        return f"{event.get_platform_name()}:{event.get_sender_id()}"
 
     def _get_group_id(self, event: AstrMessageEvent) -> str:
         return event.get_group_id() or ""
