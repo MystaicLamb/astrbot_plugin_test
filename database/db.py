@@ -21,6 +21,7 @@ class WordDatabase:
             self._conn = None
 
     async def _create_tables(self):
+        # Step 1: Create base tables without indexes that may reference missing columns
         await self._conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -35,16 +36,6 @@ class WordDatabase:
                 created_at TEXT NOT NULL,
                 groups TEXT DEFAULT '[]'
             );
-            CREATE TABLE IF NOT EXISTS learning_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                word TEXT NOT NULL,
-                first_learned TEXT NOT NULL,
-                last_review TEXT,
-                review_count INTEGER DEFAULT 0,
-                proficiency REAL DEFAULT 0.0,
-                UNIQUE(user_id, word)
-            );
             CREATE TABLE IF NOT EXISTS word_bank (
                 word TEXT PRIMARY KEY,
                 phonetic TEXT,
@@ -53,17 +44,73 @@ class WordDatabase:
                 category TEXT NOT NULL,
                 frequency INTEGER DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_lr_user ON learning_records(user_id);
             CREATE INDEX IF NOT EXISTS idx_wb_category ON word_bank(category);
             """
         )
-        # Migration: add today_learned if missing
+
+        # Step 2: Migrate learning_records if group_id is missing (rebuild table for new UNIQUE constraint)
+        async with self._conn.execute("PRAGMA table_info(learning_records)") as cursor:
+            lr_cols = {row[1] async for row in cursor}
+
+        if not lr_cols:
+            # Table does not exist yet, create it fresh
+            await self._conn.executescript(
+                """
+                CREATE TABLE learning_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT '',
+                    word TEXT NOT NULL,
+                    first_learned TEXT NOT NULL,
+                    last_review TEXT,
+                    review_count INTEGER DEFAULT 0,
+                    proficiency REAL DEFAULT 0.0,
+                    UNIQUE(user_id, group_id, word)
+                );
+                CREATE INDEX idx_lr_user ON learning_records(user_id);
+                CREATE INDEX idx_lr_group ON learning_records(group_id);
+                CREATE INDEX idx_lr_ug ON learning_records(user_id, group_id);
+                """
+            )
+        elif "group_id" not in lr_cols:
+            # Old table exists without group_id: rebuild with migration
+            await self._conn.execute("ALTER TABLE learning_records RENAME TO learning_records_old")
+            await self._conn.executescript(
+                """
+                CREATE TABLE learning_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT '',
+                    word TEXT NOT NULL,
+                    first_learned TEXT NOT NULL,
+                    last_review TEXT,
+                    review_count INTEGER DEFAULT 0,
+                    proficiency REAL DEFAULT 0.0,
+                    UNIQUE(user_id, group_id, word)
+                );
+                CREATE INDEX idx_lr_user ON learning_records(user_id);
+                CREATE INDEX idx_lr_group ON learning_records(group_id);
+                CREATE INDEX idx_lr_ug ON learning_records(user_id, group_id);
+                """
+            )
+            await self._conn.execute(
+                """
+                INSERT INTO learning_records
+                    (id, user_id, group_id, word, first_learned, last_review, review_count, proficiency)
+                SELECT id, user_id, '', word, first_learned, last_review, review_count, proficiency
+                FROM learning_records_old
+                """
+            )
+            await self._conn.execute("DROP TABLE learning_records_old")
+
+        # Step 3: Migrate users table columns if missing
         async with self._conn.execute("PRAGMA table_info(users)") as cursor:
             cols = {row[1] async for row in cursor}
         if "today_learned" not in cols:
             await self._conn.execute("ALTER TABLE users ADD COLUMN today_learned INTEGER DEFAULT 0")
         if "groups" not in cols:
             await self._conn.execute("ALTER TABLE users ADD COLUMN groups TEXT DEFAULT '[]'")
+
         await self._conn.commit()
 
     # --- users ---
@@ -117,9 +164,26 @@ class WordDatabase:
         return 0
 
     async def get_group_users(self, group_id: str, limit: int = 10):
+        """Return users ranked by group-specific learned count."""
         async with self._conn.execute(
-            "SELECT * FROM users WHERE groups LIKE ? ORDER BY total_learned DESC LIMIT ?",
-            (f'%"{group_id}"%', limit),
+            """
+            SELECT u.*, COALESCE(g.group_learned, 0) as group_learned,
+                   COALESCE(g.group_streak, 0) as group_streak,
+                   COALESCE(g.group_today_learned, 0) as group_today_learned,
+                   COALESCE(g.group_last_checkin, '') as group_last_checkin
+            FROM users u
+            JOIN (
+                SELECT user_id, COUNT(*) as group_learned,
+                       MAX(streak_days) as group_streak,
+                       MAX(today_learned) as group_today_learned,
+                       MAX(last_checkin) as group_last_checkin
+                FROM learning_records
+                WHERE group_id = ?
+                GROUP BY user_id
+            ) g ON u.user_id = g.user_id
+            ORDER BY group_learned DESC LIMIT ?
+            """,
+            (group_id, limit),
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -130,6 +194,31 @@ class WordDatabase:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+    # --- group-scoped learning stats ---
+    async def get_group_learned_words(self, user_id: str, group_id: str):
+        async with self._conn.execute(
+            "SELECT word, review_count FROM learning_records WHERE user_id = ? AND group_id = ?",
+            (user_id, group_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_group_recent_words(self, user_id: str, group_id: str, limit: int = 10):
+        async with self._conn.execute(
+            "SELECT word, first_learned, review_count FROM learning_records WHERE user_id = ? AND group_id = ? ORDER BY first_learned DESC LIMIT ?",
+            (user_id, group_id, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_group_today_learned(self, user_id: str, group_id: str, today: str) -> int:
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM learning_records WHERE user_id = ? AND group_id = ? AND first_learned = ?",
+            (user_id, group_id, today),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
     # --- learning_records ---
     async def get_learned_words(self, user_id: str):
@@ -148,17 +237,17 @@ class WordDatabase:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
-    async def add_learning_record(self, user_id: str, word: str, today: str):
+    async def add_learning_record(self, user_id: str, group_id: str, word: str, today: str):
         await self._conn.execute(
-            "INSERT OR IGNORE INTO learning_records (user_id, word, first_learned, last_review, review_count) VALUES (?, ?, ?, ?, ?)",
-            (user_id, word, today, today, 1),
+            "INSERT OR IGNORE INTO learning_records (user_id, group_id, word, first_learned, last_review, review_count) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, group_id, word, today, today, 1),
         )
         await self._conn.commit()
 
-    async def update_review(self, user_id: str, word: str, today: str):
+    async def update_review(self, user_id: str, group_id: str, word: str, today: str):
         await self._conn.execute(
-            "UPDATE learning_records SET last_review = ?, review_count = review_count + 1 WHERE user_id = ? AND word = ?",
-            (today, user_id, word),
+            "UPDATE learning_records SET last_review = ?, review_count = review_count + 1 WHERE user_id = ? AND group_id = ? AND word = ?",
+            (today, user_id, group_id, word),
         )
         await self._conn.commit()
 
