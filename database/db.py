@@ -212,6 +212,48 @@ class WordDatabase:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+    async def get_group_total_learned(self, user_id: str, group_id: str) -> int:
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM learning_records WHERE user_id = ? AND group_id = ?",
+            (user_id, group_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def get_group_last_checkin(self, user_id: str, group_id: str) -> str:
+        async with self._conn.execute(
+            "SELECT MAX(first_learned) FROM learning_records WHERE user_id = ? AND group_id = ?",
+            (user_id, group_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row and row[0] else ""
+
+    async def get_group_streak(self, user_id: str, group_id: str) -> int:
+        """Count consecutive days of learning in this group ending today/yesterday."""
+        async with self._conn.execute(
+            "SELECT DISTINCT first_learned FROM learning_records "
+            "WHERE user_id = ? AND group_id = ? ORDER BY first_learned DESC",
+            (user_id, group_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        if not rows:
+            return 0
+        dates = [row[0] for row in rows]
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        latest = datetime.strptime(dates[0], "%Y-%m-%d")
+        if latest < today - timedelta(days=1):
+            return 0
+        streak = 0
+        expected = today
+        for d in dates:
+            if d == expected.strftime("%Y-%m-%d"):
+                streak += 1
+                expected -= timedelta(days=1)
+            elif d < expected.strftime("%Y-%m-%d"):
+                break
+        return streak
+
     async def get_group_today_learned(self, user_id: str, group_id: str, today: str) -> int:
         async with self._conn.execute(
             "SELECT COUNT(*) FROM learning_records WHERE user_id = ? AND group_id = ? AND first_learned = ?",
