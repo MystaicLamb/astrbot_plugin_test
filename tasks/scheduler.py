@@ -419,9 +419,20 @@ class PushScheduler:
 
         img_path = self._render_word_image(word)
 
+        # Find the platform adapter that matches the stored platform name
+        platform_inst = None
+        for p in self.context.platform_manager.get_insts():
+            if p.meta().name == platform_name:
+                platform_inst = p
+                break
+
+        if platform_inst is None:
+            logger.error(f"Failed to send push: no platform adapter found with name '{platform_name}'.")
+            return
+
         mt = MessageType.FRIEND_MESSAGE if target_type == "private" else MessageType.GROUP_MESSAGE
         session = MessageSession(
-            platform_name=platform_name,
+            platform_name=platform_inst.meta().id,
             message_type=mt,
             session_id=target_id,
         )
@@ -430,10 +441,7 @@ class PushScheduler:
             from astrbot.api.message_components import Plain
             text = "🌅 早安！今日单词已送达 ~\n💡 发送 /今日单词 开始学习，/复习单词 巩固记忆"
             chain = [Plain(text), Image.fromFileSystem(img_path)]
-            sent = await self.context.send_message(session, chain)
-            if sent:
-                logger.info("Daily push sent successfully.")
-            else:
-                logger.error(f"Failed to send push: no platform matched {platform_name}. Check platform_name in config.")
+            await platform_inst.send_by_session(session, chain)
+            logger.info("Daily push sent successfully.")
         except Exception as e:
             logger.error(f"Failed to send push message: {e}")
