@@ -9,6 +9,7 @@ from astrbot.api import logger
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
+from astrbot.core.message.message_event_result import MessageChain
 from astrbot.api.message_components import Image, Plain
 
 from PIL import Image as PILImage, ImageDraw, ImageFont
@@ -438,9 +439,8 @@ class PushScheduler:
         )
 
         try:
-            from astrbot.api.message_components import Plain
             text = "🌅 早安！今日单词已送达 ~\n💡 发送 /今日单词 开始学习，/复习单词 巩固记忆"
-            chain = [Plain(text), Image.fromFileSystem(img_path)]
+            chain = MessageChain(chain=[Plain(text), Image.fromFileSystem(img_path)])
             await platform_inst.send_by_session(session, chain)
             logger.info("Daily push sent successfully.")
         except Exception as e:
