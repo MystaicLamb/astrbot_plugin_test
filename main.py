@@ -673,6 +673,7 @@ class DailyWordPlugin(Star):
                     else:
                         push_cfg["target_type"] = "private"
                         push_cfg["target_id"] = event.get_sender_id()
+                push_cfg["platform_name"] = event.get_platform_name()
             self.config["daily_push"] = push_cfg
             if hasattr(self.config, "save_config"):
                 self.config.save_config()
@@ -684,6 +685,7 @@ class DailyWordPlugin(Star):
             push_cfg["enabled"] = True
             push_cfg["target_id"] = arg
             push_cfg["target_type"] = "private"
+            push_cfg["platform_name"] = event.get_platform_name()
             self.config["daily_push"] = push_cfg
             if hasattr(self.config, "save_config"):
                 self.config.save_config()

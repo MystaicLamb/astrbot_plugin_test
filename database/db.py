@@ -163,8 +163,11 @@ class WordDatabase:
             return user.get("today_learned", 0)
         return 0
 
-    async def get_group_users(self, group_id: str, limit: int = 10):
+    async def get_group_users(self, group_id: str, limit: int = 10, today: str = ""):
         """Return users ranked by group-specific learned count."""
+        if not today:
+            from datetime import datetime
+            today = datetime.now().strftime("%Y-%m-%d")
         async with self._conn.execute(
             """
             SELECT u.*, COALESCE(g.group_learned, 0) as group_learned,
@@ -174,16 +177,16 @@ class WordDatabase:
             FROM users u
             JOIN (
                 SELECT user_id, COUNT(*) as group_learned,
-                       MAX(streak_days) as group_streak,
-                       MAX(today_learned) as group_today_learned,
-                       MAX(last_checkin) as group_last_checkin
+                       COUNT(DISTINCT first_learned) as group_streak,
+                       SUM(CASE WHEN first_learned = ? THEN 1 ELSE 0 END) as group_today_learned,
+                       MAX(first_learned) as group_last_checkin
                 FROM learning_records
                 WHERE group_id = ?
                 GROUP BY user_id
             ) g ON u.user_id = g.user_id
             ORDER BY group_learned DESC LIMIT ?
             """,
-            (group_id, limit),
+            (today, group_id, limit),
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]

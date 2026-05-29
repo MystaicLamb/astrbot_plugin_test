@@ -109,6 +109,7 @@ class PushScheduler:
             payload={
                 "target_type": target_type,
                 "target_id": target_id,
+                "platform_name": push_cfg.get("platform_name", "aiocqhttp"),
                 "include_learned": config.get("include_learned", False),
             },
             enabled=True,
@@ -382,17 +383,16 @@ class PushScheduler:
         img.save(out_path, "PNG")
         return out_path
 
-    async def _on_push(self, target_type: str, target_id: str, include_learned: bool = False):
-        logger.info(f"Daily push triggered for {target_type}:{target_id}")
+    async def _on_push(self, target_type: str, target_id: str, platform_name: str = "aiocqhttp", include_learned: bool = False):
+        logger.info(f"Daily push triggered for {platform_name}:{target_type}:{target_id}")
 
         today = datetime.now().strftime("%Y-%m-%d")
         group_id = target_id if target_type == "group" else ""
 
         user_id = f"cron_{target_id}"
-        platform = "cron"
         user = await self.db.get_user(user_id)
         if not user:
-            await self.db.create_user(user_id, platform, target_id)
+            await self.db.create_user(user_id, "cron", target_id)
             user = await self.db.get_user(user_id)
 
         word = await self.wordbank_loader.pick_new_word(user_id, group_id=group_id, include_learned=include_learned)
@@ -401,21 +401,27 @@ class PushScheduler:
             return
 
         await self.db.add_learning_record(user_id, group_id, word["word"], today)
-        total = user.get("total_learned", 0) + 1
+
+        # Query fresh stats from DB (not stale user snapshot)
+        total = await self.db.get_global_total_learned(user_id)
+        last_checkin = await self.db.get_user_last_checkin(user_id)
+
         streak = 1
-        if user.get("last_checkin"):
-            last = user["last_checkin"]
-            last_dt = datetime.strptime(last, "%Y-%m-%d")
+        if last_checkin and last_checkin != today:
+            last_dt = datetime.strptime(last_checkin, "%Y-%m-%d")
             if (datetime.now() - last_dt).days == 1:
-                streak = user.get("streak_days", 0) + 1
-        today_learned = await self.db.get_group_today_learned(user_id, group_id, today) + 1
+                streak = await self.db.get_global_streak(user_id)
+        if last_checkin == today:
+            streak = await self.db.get_global_streak(user_id)
+
+        today_learned = await self.db.get_user_today_learned(user_id, today)
         await self.db.update_user_checkin(user_id, today, streak, total, today_learned)
 
         img_path = self._render_word_image(word)
 
         mt = MessageType.FRIEND_MESSAGE if target_type == "private" else MessageType.GROUP_MESSAGE
         session = MessageSession(
-            platform_name="cron",
+            platform_name=platform_name,
             message_type=mt,
             session_id=target_id,
         )
@@ -424,7 +430,10 @@ class PushScheduler:
             from astrbot.api.message_components import Plain
             text = "🌅 早安！今日单词已送达 ~\n💡 发送 /今日单词 开始学习，/复习单词 巩固记忆"
             chain = [Plain(text), Image.fromFileSystem(img_path)]
-            await self.context.send_message(session, chain)
-            logger.info("Daily push sent successfully.")
+            sent = await self.context.send_message(session, chain)
+            if sent:
+                logger.info("Daily push sent successfully.")
+            else:
+                logger.error(f"Failed to send push: no platform matched {platform_name}. Check platform_name in config.")
         except Exception as e:
             logger.error(f"Failed to send push message: {e}")
